@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Evaluation Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="loginView" class="center">
+    <form id="login" class="card">
+      <div>
+        <h1>Admin</h1>
+        <p class="muted">Manage the grading criteria.</p>
+      </div>
+      <label>Admin password
+        <input id="pw" type="password" required autocomplete="current-password">
+      </label>
+      <button id="loginBtn">Sign in</button>
+    </form>
+  </main>
+
+  <div id="adminView" class="hidden">
+    <header class="bar">
+      <h1>Grading Criteria</h1>
+      <div class="who"><a href="grade.html">Go to grading →</a></div>
+    </header>
+    <main class="admin">
+      <div class="card">
+        <div id="rows"></div>
+        <p id="none" class="muted hidden">No criteria yet. Add the first one below.</p>
+        <div class="actions" style="justify-content: space-between; margin-top: 16px">
+          <button type="button" class="ghost" id="add">+ Add criterion</button>
+          <button type="button" id="saveBtn">Save changes</button>
+        </div>
+      </div>
+      <p class="note">
+        Total of max marks: <strong id="maxTotal">0</strong>.
+        Renaming a criterion also renames its column in the <em>Grades</em> sheet, so marks already given stay attached.
+        Deleting one removes it from the form; marks already given for it stay in the sheet.
+        Evaluators see changes the next time they open or reload the grading page.
+      </p>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+  <script>
+    const $ = id => document.getElementById(id);
+    let password = '', items = [], dirty = false;
+
+    function loadSavedPassword() {
+      try { return sessionStorage.getItem('adminPw') || ''; } catch (e) { return ''; }
+    }
+
+    async function login(pw) {
+      const r = await apiPost({ action: 'login', password: pw });
+      if (!r.ok) throw new Error('Wrong password');
+      password = pw;
+      try { sessionStorage.setItem('adminPw', pw); } catch (e) {}
+      const d = await apiGet({ action: 'init' });
+      setItems(d.criteria);
+      $('loginView').classList.add('hidden');
+      $('adminView').classList.remove('hidden');
+    }
+
+    $('login').onsubmit = async e => {
+      e.preventDefault();
+      $('loginBtn').disabled = true; $('loginBtn').textContent = 'Checking…';
+      try { await login($('pw').value); }
+      catch (err) { toast(err.message, true); }
+      finally { $('loginBtn').disabled = false; $('loginBtn').textContent = 'Sign in'; }
+    };
+
+    const saved = loadSavedPassword();
+    if (saved) login(saved).catch(() => { try { sessionStorage.removeItem('adminPw'); } catch (e) {} });
+
+    function setItems(criteria) {
+      items = criteria.map(c => ({ name: c.name, max: c.max, oldName: c.name }));
+      dirty = false;
+      render();
+    }
+
+    function render() {
+      $('none').classList.toggle('hidden', items.length > 0);
+      $('rows').innerHTML = items.map((c, i) => `
+        <div class="crit-row" data-i="${i}">
+          <span class="num">${i + 1}.</span>
+          <input data-f="name" value="${esc(c.name)}" placeholder="Criterion name" aria-label="Criterion name">
+          <input data-f="max" type="number" min="1" step="any" value="${c.max}" placeholder="Max" aria-label="Max marks">
+          <button type="button" class="icon" data-act="up" title="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="icon" data-act="down" title="Move down" ${i === items.length - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" class="icon danger" data-act="del" title="Delete">✕</button>
+          <span class="was">${renamedHint(c)}</span>
+        </div>`).join('');
+      updateMaxTotal();
+    }
+
+    function renamedHint(c) {
+      return c.oldName && c.oldName !== c.name.trim() ? `Renamed from “${esc(c.oldName)}”` : '';
+    }
+
+    function updateMaxTotal() {
+      $('maxTotal').textContent = +items.reduce((a, c) => a + (Number(c.max) || 0), 0).toFixed(2);
+    }
+
+    // Update in place rather than re-rendering, so focus and typing aren't interrupted.
+    $('rows').oninput = e => {
+      const row = e.target.closest('.crit-row');
+      const c = items[+row.dataset.i];
+      const f = e.target.dataset.f;
+      c[f] = e.target.value;
+      dirty = true;
+      if (f === 'max') updateMaxTotal();
+      else row.querySelector('.was').innerHTML = renamedHint(c);
+    };
+
+    $('rows').onclick = e => {
+      const b = e.target.closest('button[data-act]');
+      if (!b) return;
+      const i = +b.closest('.crit-row').dataset.i;
+      if (b.dataset.act === 'del') {
+        if (!confirm(`Delete “${items[i].name || 'this criterion'}”?`)) return;
+        items.splice(i, 1);
+      } else {
+        const j = b.dataset.act === 'up' ? i - 1 : i + 1;
+        [items[i], items[j]] = [items[j], items[i]];
+      }
+      dirty = true;
+      render();
+    };
+
+    $('add').onclick = () => {
+      items.push({ name: '', max: 10, oldName: '' });
+      dirty = true;
+      render();
+      $('rows').querySelector('.crit-row:last-child input').focus();
+    };
+
+    $('saveBtn').onclick = async () => {
+      $('saveBtn').disabled = true; $('saveBtn').textContent = 'Saving…';
+      try {
+        const r = await apiPost({ action: 'saveCriteria', password, criteria: items });
+        setItems(r.criteria);
+        toast('Criteria saved');
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        $('saveBtn').disabled = false; $('saveBtn').textContent = 'Save changes';
+      }
+    };
+
+    addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+  </script>
+</body>
+</html>

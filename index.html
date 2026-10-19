@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project Evaluation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="center">
+    <form id="start" class="card">
+      <div>
+        <h1>Project Evaluation</h1>
+        <p class="muted">Enter your name once. It's remembered on this device and attached to every mark you give.</p>
+      </div>
+      <label>Evaluator name
+        <input id="name" required autocomplete="name" placeholder="e.g. Dr. A. Kumar">
+      </label>
+      <button>Start evaluating</button>
+    </form>
+  </main>
+
+  <script src="app.js"></script>
+  <script>
+    // Name already saved: skip straight to grading.
+    if (getEvaluator()) location.replace('grade.html');
+
+    document.getElementById('start').onsubmit = e => {
+      e.preventDefault();
+      const name = document.getElementById('name').value.trim().replace(/\s+/g, ' ');
+      if (!name) return;
+      setEvaluator(name);
+      // Also passed in the URL, in case this browser blocks storage.
+      location.href = 'grade.html?evaluator=' + encodeURIComponent(name);
+    };
+  </script>
+</body>
+</html>

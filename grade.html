@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grade Students</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1>Project Evaluation</h1>
+    <div class="who">Evaluating as <strong id="who"></strong><br>
+      <button class="link" id="switch">Not you? Change name</button>
+    </div>
+  </header>
+
+  <div id="loading" class="loading">Loading students…</div>
+  <div id="fatal" class="error-box hidden"></div>
+
+  <main id="app" class="layout hidden">
+    <aside class="sidebar">
+      <div class="progress"><span id="progressText"></span>
+        <div class="progress-bar"><span id="progressFill"></span></div>
+      </div>
+      <input id="search" type="search" placeholder="Search name or roll no" aria-label="Search students">
+      <ul id="list" class="student-list"></ul>
+    </aside>
+
+    <section class="grade-panel">
+      <div id="pick" class="card muted">Select a student from the list to enter marks.</div>
+      <form id="form" class="card hidden" novalidate>
+        <div class="head">
+          <div>
+            <h2 id="sName"></h2>
+            <span class="muted" id="sRoll"></span>
+          </div>
+          <span id="sBadge" class="badge hidden">Graded</span>
+        </div>
+        <div id="criteria" class="criteria"></div>
+        <div class="total-row"><span>Total</span><span id="total"></span></div>
+        <div class="actions">
+          <button type="submit" id="save">Save &amp; next</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const evaluator = params.get('evaluator') || getEvaluator();
+    if (!evaluator) location.replace('index.html');
+    setEvaluator(evaluator);
+
+    const $ = id => document.getElementById(id);
+    let students = [], criteria = [], graded = {}, current = null, dirty = false;
+
+    $('who').textContent = evaluator;
+    $('switch').onclick = () => {
+      if (!confirm('Switch to a different evaluator? Marks already saved stay saved.')) return;
+      setEvaluator('');
+      location.href = 'index.html';
+    };
+
+    apiGet({ action: 'init', evaluator })
+      .then(d => {
+        students = d.students; criteria = d.criteria; graded = d.graded;
+        $('loading').classList.add('hidden');
+        if (!criteria.length) return fatal('No grading criteria have been set up yet. Ask the admin to add them on the admin page.');
+        $('app').classList.remove('hidden');
+        renderList();
+        renderProgress();
+      })
+      .catch(err => fatal('Could not load data: ' + err.message));
+
+    function fatal(msg) {
+      $('loading').classList.add('hidden');
+      $('fatal').textContent = msg;
+      $('fatal').classList.remove('hidden');
+    }
+
+    function renderProgress() {
+      const done = students.filter(s => graded[s.roll]).length;
+      $('progressText').textContent = `${done} of ${students.length} graded`;
+      $('progressFill').style.width = (students.length ? 100 * done / students.length : 0) + '%';
+    }
+
+    function renderList() {
+      const q = $('search').value.trim().toLowerCase();
+      const shown = students.filter(s => !q || s.name.toLowerCase().includes(q) || s.roll.toLowerCase().includes(q));
+      $('list').innerHTML = shown.length ? shown.map(s => `
+        <li><button type="button" data-roll="${esc(s.roll)}" class="${current && current.roll === s.roll ? 'active' : ''}">
+          <span class="roll">${esc(s.roll)}</span>
+          <span class="name">${esc(s.name)}</span>
+          <span class="tick" aria-label="${graded[s.roll] ? 'graded' : ''}">${graded[s.roll] ? '✓' : ''}</span>
+        </button></li>`).join('') : '<li class="empty">No matching students</li>';
+    }
+
+    $('search').oninput = renderList;
+    $('list').onclick = e => {
+      const b = e.target.closest('button[data-roll]');
+      if (b) select(students.find(s => s.roll === b.dataset.roll));
+    };
+
+    function select(s) {
+      if (dirty && current && current.roll !== s.roll &&
+          !confirm(`You have unsaved marks for ${current.name}. Discard them?`)) return;
+      current = s; dirty = false;
+      const prev = graded[s.roll] || {};
+      $('pick').classList.add('hidden');
+      $('form').classList.remove('hidden');
+      $('sName').textContent = s.name;
+      $('sRoll').textContent = 'Roll no. ' + s.roll;
+      $('sBadge').classList.toggle('hidden', !graded[s.roll]);
+      $('criteria').innerHTML = criteria.map((c, i) => `
+        <label class="criterion">
+          <span>${esc(c.name)} <span class="max">/ ${c.max}</span></span>
+          <input type="number" inputmode="decimal" min="0" max="${c.max}" step="any" required
+                 data-i="${i}" value="${prev[c.name] ?? ''}" placeholder="0–${c.max}">
+        </label>`).join('');
+      updateTotal();
+      renderList();
+      // Desktop: jump straight to the first box. Phone: bring the form (below the list) into view.
+      const first = $('criteria').querySelector('input');
+      if (matchMedia('(min-width: 761px)').matches) first.focus();
+      else $('form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    $('criteria').oninput = () => { dirty = true; updateTotal(); };
+
+    function updateTotal() {
+      let sum = 0;
+      $('criteria').querySelectorAll('input').forEach(inp => { sum += Number(inp.value) || 0; });
+      const max = criteria.reduce((a, c) => a + c.max, 0);
+      $('total').textContent = `${+sum.toFixed(2)} / ${max}`;
+    }
+
+    $('form').onsubmit = async e => {
+      e.preventDefault();
+      const inputs = [...$('criteria').querySelectorAll('input')];
+      const bad = inputs.find(inp => inp.value === '' || !inp.checkValidity());
+      if (bad) {
+        const c = criteria[bad.dataset.i];
+        toast(`${c.name}: enter a mark between 0 and ${c.max}`, true);
+        return bad.focus();
+      }
+      const marks = {};
+      inputs.forEach(inp => { marks[criteria[inp.dataset.i].name] = Number(inp.value); });
+
+      $('save').disabled = true; $('save').textContent = 'Saving…';
+      try {
+        const s = current;
+        const r = await apiPost({ action: 'grade', evaluator, roll: s.roll, marks });
+        graded[s.roll] = marks;
+        dirty = false;
+        toast(`Saved ${s.name} — total ${r.total}`);
+        renderProgress();
+        const next = nextUngraded(s);
+        if (next) select(next); else { $('sBadge').classList.remove('hidden'); renderList(); toast('All students graded 🎉'); }
+      } catch (err) {
+        toast('Not saved: ' + err.message, true);
+      } finally {
+        $('save').disabled = false; $('save').textContent = 'Save & next';
+      }
+    };
+
+    function nextUngraded(from) {
+      const i = students.indexOf(from);
+      const order = students.slice(i + 1).concat(students.slice(0, i));
+      return order.find(s => !graded[s.roll]);
+    }
+
+    addEventListener('beforeunload', e => { if (dirty) e.preventDefault(); });
+  </script>
+</body>
+</html>
