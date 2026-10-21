@@ -1,5 +1,5 @@
 // Paste the Web app URL from Apps Script (Deploy → Manage deployments) here.
-const API_URL = 'PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE';
+const API_URL = 'https://script.google.com/macros/s/AKfycbyJ88ooiTc56KUQzcwOSx7gT8wT_7CKd8AITINAGfUgx_Xgr-aPXvodkVfWMvtPfNpL/exec';
 
 const EVALUATOR_KEY = 'evaluatorName';
 
